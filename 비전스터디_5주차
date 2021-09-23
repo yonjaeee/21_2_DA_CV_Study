@@ -1,0 +1,247 @@
+# 비전 스터디 5주차
+
+## MMDetection
+
+### MMDetection 설명
+
+![mm-detection-logo](https://user-images.githubusercontent.com/59776953/134487862-598c7876-c034-44db-a866-38d634e93fa0.png)
+
+- 칭화대의 Computer Vision Open Source Project인 OpenMMLab에서 출발
+	- Detectron은 Facebook Research에서 비롯된 것과 달리 학술 기관에서 출발했다는 특징
+- 다양한 Object Detection, Segmentation 알고리즘을 Package로 구현하여 제공
+- 뛰어난 성능을 구현하고,  Config 기반으로 데이터부터 모델 학습/평가까지 이어지는 간편한 파이프라인 적용
+- Pytorch 기반으로 구현
+- Backbone이 대다수 Resnet 기반인 것이 단점이라면 단점 (MobileNet 구현 X)
+
+### MM Detection 구성 모델
+
+Backbone 지원
+- ResNet
+- ResNeXt
+- VGG
+- HRNet
+- Res2Net
+- ResNeSt 
+
+Object Detection과 Segmentation 지원
+
+![objectdetection_segmentation](https://user-images.githubusercontent.com/59776953/134487917-eb030033-56fc-42c8-86d3-0b9765be0da3.png)
+
+### 모델 아키텍쳐
+
+![mmdet model](https://user-images.githubusercontent.com/59776953/134488019-7d1c2da9-bb86-4c04-9026-114c234f847d.png)
+
+- Backbone: 큰 데이터셋 (ImageNet 등)에 pretrained된 딥러닝 모델. Feature Extract하는 역할. (이미지 -> Feature Map)
+	-  ex) ResNet, VGG
+- Neck: Backbone과 Heads를 연결하면서 Heads가 Feature Map의 특성을 잘 해석하고 처리할 수 있도록 정제 작업 수행
+	- ex) FPN
+- Dense Head: Feature Map에서 Object의 위치와 Classification을 모두 처리하는 부분
+- ROI Extractor: Feature Map에서 ROI 정보를 뽑아내는 부분
+- ROI Head (BBox Head/Mask Head): ROI 정보를 기반으로 Object 위치와 Classification을 수행하는 부분
+
+
+### MMDetection 주요 구성 요소
+
+![mmdet structure](https://user-images.githubusercontent.com/59776953/134488081-d8061028-562d-482f-b130-4fbab4d296ad.png)
+
+#### Config 파일
+
+![mmdet config](https://user-images.githubusercontent.com/59776953/134488116-2f6697fc-092d-4e7e-997e-6e3d988417e6.png)
+
+ Pretrained된 타 프레임워크 모델(Frozen Graph)의 구동을 위한 환경 파일
+ 
+ ![config pipeline](https://user-images.githubusercontent.com/59776953/134488153-d7b0fd6f-1f73-4d1c-bd5a-4b5fd06b015f.png)
+ 
+- 학습에 필요한 여러 설정을 Customization 가능
+
+#### MS-COCO
+
+- 이미지 파일들은 train, validation, test folder로 나눠서 저장됨
+- 모든 이미지들에 대해 1개의 JSON 형식의 Annotation 파일 가짐
+	- info: COCO Dataset 생성 일자 등을 가지는 헤더 정보
+	- license: 이미지 파일들의 라이선스 정보
+	- images: 모든 이미지들의 id, 파일명, 이미지 너비, 높이 정보
+	- annotations: 대상 image 및 object id, segmentation, bounding box, 픽셀 영역 등 상세 정보
+	- categories: 80개 카테고리에 대한 id, 이름, group
+
+** MS-COCO 형식으로 나타낼 수 있다면, MS-COCO 형식으로 나타내면 좋음
+
+### Custom Dataset 구축
+
+```
+[
+	{
+		'filename': 'a.jpg',
+		'width': 1280,
+		'height': 720,
+		'ann': {
+			'bboxes': <np.ndarray, float32> (n, 4),
+			'labels': <np.ndarray, int64> (n, ),
+			'bboxes_ignore': <np.ndarray, float32> (k, 4),
+			'labels_ignore': <np.ndarray, int64> (k, ) (optional field)
+		}
+	},
+	...
+]
+```
+- 이미지들에 대한 annotation 정보들을 각각 list의 객체로 가짐
+- 1개 이미지는 여러 개의 Object bbox와 labels annotation 정보들을 개별 dict로 가짐
+- 1개 이미지의 Object bbox와 2차원 array로, object label은 1차원  array로 구성
+
+```
+import copy
+import os.path as osp
+import cv2
+
+import mmcv
+import numpy as np
+
+from mmdet.datasets.builder import DATASETS
+from mmdet.datasets.custom import CustomDataset
+
+# 반드시 아래 Decorator 설정 할것.@DATASETS.register_module() 설정 시 force=True를 입력하지 않으면 Dataset 재등록 불가.
+
+@DATASETS.register_module(force=True)
+class  KittyTinyDataset(CustomDataset):
+	CLASSES = ('Car', 'Truck', 'Pedestrian', 'Cyclist')
+
+##### self.data_root: /content/kitti_tiny/ self.ann_file: /content/kitti_tiny/train.txt self.img_prefix: /content/kitti_tiny/training/image_2
+#### ann_file: /content/kitti_tiny/train.txt
+
+# annotation에 대한 모든 파일명을 가지고 있는 텍스트 파일을 __init__(self, ann_file)로 입력 받고, 이 self.ann_file이 load_annotations()의 인자로 입력
+
+	def  load_annotations(self, ann_file):
+		print('##### self.data_root:', self.data_root, 'self.ann_file:', self.ann_file, 'self.img_prefix:', self.img_prefix)
+		print('#### ann_file:', ann_file)
+		cat2label = {k:i for i, k in  enumerate(self.CLASSES)}
+		image_list = mmcv.list_from_file(self.ann_file)
+		# 포맷 중립 데이터를 담을 list 객체
+		data_infos = []
+
+	for image_id in image_list:
+		filename = '{0:}/{1:}.jpeg'.format(self.img_prefix, image_id)
+		# 원본 이미지의 너비, 높이를 image를 직접 로드하여 구함.
+		image = cv2.imread(filename)
+		height, width = image.shape[:2]
+		# 개별 image의 annotation 정보 저장용 Dict 생성. key값 filename 에는 image의 파일명만 들어감(디렉토리는 제외)
+		data_info = {'filename': str(image_id) + '.jpeg',
+		'width': width, 'height': height}
+
+		# 개별 annotation이 있는 서브 디렉토리의 prefix 변환.
+		label_prefix = self.img_prefix.replace('image_2', 'label_2')
+		# 개별 annotation 파일을 1개 line 씩 읽어서 list 로드
+		lines = mmcv.list_from_file(osp.join(label_prefix, str(image_id)+'.txt'))
+
+		# 전체 lines를 개별 line별 공백 레벨로 parsing 하여 다시 list로 저장. content는 list의 list형태임.
+		# ann 정보는 numpy array로 저장되나 텍스트 처리나 데이터 가공이 list 가 편하므로 일차적으로 list로 변환 수행.
+		content = [line.strip().split(' ') for line in lines]
+		# 오브젝트의 클래스명은 bbox_names로 저장.
+		bbox_names = [x[0] for x in content]
+		# bbox 좌표를 저장
+		bboxes = [ [float(info) for info in x[4:8]] for x in content]
+
+		# 클래스명이 해당 사항이 없는 대상 Filtering out, 'DontCare'sms ignore로 별도 저장.
+		gt_bboxes = []
+		gt_labels = []
+		gt_bboxes_ignore = []
+		gt_labels_ignore = []
+
+		for bbox_name, bbox in  zip(bbox_names, bboxes):
+			# 만약 bbox_name이 클래스명에 해당 되면, gt_bboxes와 gt_labels에 추가, 그렇지 않으면 gt_bboxes_ignore, gt_labels_ignore에 추가
+			if bbox_name in cat2label:
+				gt_bboxes.append(bbox)
+				# gt_labels에는 class id를 입력
+				gt_labels.append(cat2label[bbox_name])
+			else:
+				gt_bboxes_ignore.append(bbox)
+				gt_labels_ignore.append(-1)
+
+		# 개별 image별 annotation 정보를 가지는 Dict 생성. 해당 Dict의 value값은 모두 np.array임.
+		data_anno = {
+			'bboxes': np.array(gt_bboxes, dtype=np.float32).reshape(-1, 4),
+			'labels': np.array(gt_labels, dtype=np.long),
+			'bboxes_ignore': np.array(gt_bboxes_ignore, dtype=np.float32).reshape(-1, 4),
+			'labels_ignore': np.array(gt_labels_ignore, dtype=np.long)
+		}
+		# image에 대한 메타 정보를 가지는 data_info Dict에 'ann' key값으로 data_anno를 value로 저장.
+		data_info.update(ann=data_anno)
+		# 전체 annotation 파일들에 대한 정보를 가지는 data_infos에 data_info Dict를 추가
+		data_infos.append(data_info)
+	return data_infos
+```
+
+- Custom Dataset 객체를  Detection Framework에 등록
+- Config에 설정된 주요 값으로 Custom Dataset 객체 생성
+- Config로부터 객체 생성 시 인자 입력됨
+- 'load_annotations'에서 middle format으로 변환
+	- 직접 customize 코드 작성
+
+```
+from mmdet.apis import set_random_seed
+
+# dataset에 대한 환경 파라미터 수정.
+cfg.dataset_type = 'KittyTinyDataset'
+cfg.data_root = '/content/kitti_tiny/'
+
+# train, val, test dataset에 대한 type, data_root, ann_file, img_prefix 환경 파라미터 수정.
+cfg.data.train.type = 'KittyTinyDataset'
+cfg.data.train.data_root = '/content/kitti_tiny/'
+cfg.data.train.ann_file = 'train.txt'
+cfg.data.train.img_prefix = 'training/image_2'
+
+cfg.data.val.type = 'KittyTinyDataset'
+cfg.data.val.data_root = '/content/kitti_tiny/'
+cfg.data.val.ann_file = 'val.txt'
+cfg.data.val.img_prefix = 'training/image_2'
+
+cfg.data.test.type = 'KittyTinyDataset'
+cfg.data.test.data_root = '/content/kitti_tiny/'
+cfg.data.test.ann_file = 'val.txt'
+cfg.data.test.img_prefix = 'training/image_2'
+
+# class의 갯수 수정.
+cfg.model.roi_head.bbox_head.num_classes = 4
+
+# pretrained 모델
+cfg.load_from = 'checkpoints/faster_rcnn_r50_fpn_1x_coco_20200130-047c8118.pth'
+
+# 학습 weight 파일로 로그를 저장하기 위한 디렉토리 설정.
+cfg.work_dir = './tutorial_exps'
+
+# 학습율 변경 환경 파라미터 설정.
+cfg.optimizer.lr = 0.02 / 8
+
+cfg.lr_config.warmup = None
+cfg.log_config.interval = 10
+
+# config 수행 시마다 policy값이 없어지는 bug로 인하여 설정.
+cfg.lr_config.policy = 'step'
+
+# Change the evaluation metric since we use customized dataset.
+cfg.evaluation.metric = 'mAP'
+# We can set the evaluation interval to reduce the evaluation times
+cfg.evaluation.interval = 12
+# We can set the checkpoint saving interval to reduce the storage cost
+cfg.checkpoint_config.interval = 12
+
+# Set seed thus the results are more reproducible
+cfg.seed = 0
+set_random_seed(0, deterministic=False)
+cfg.gpu_ids = range(1)
+
+# We can initialize the logger for training and have a look
+# at the final config used for training
+
+print(f'Config:\n{cfg.pretty_text}')
+```
+- config 수정
+
+```
+from mmdet.datasets import build_dataset
+from mmdet.models import build_detector
+from mmdet.apis import train_detector
+
+# train용 Dataset 생성.
+datasets = [build_dataset(cfg.data.train)]
+```
+- config에서 설정한 dataset에 따라 dataset 생성
